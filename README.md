@@ -2,9 +2,15 @@
 
 **Give your AI coding assistant a persistent, structured memory of your entire codebase.**
 
-[中文](#中文说明) | [English](#english)
+**为你的 AI 编程助手构建持久化、结构化的代码仓库记忆。**
+
+<p align="center">
+  <a href="#english">English</a> | <a href="#%E4%B8%AD%E6%96%87%E8%AF%B4%E6%98%8E">中文</a>
+</p>
 
 ---
+
+<a id="english"></a>
 
 ## English
 
@@ -177,6 +183,8 @@ Typical workflow: OpenSpec defines the task → repo-memory provides codebase un
 MIT
 
 ---
+
+<a id="中文说明"></a>
 
 ## 中文说明
 
