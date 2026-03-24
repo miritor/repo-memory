@@ -28,18 +28,18 @@ fi
 EXCLUDE="node_modules/|dist/|build/|\.next/|__pycache__/|vendor/|\.repo-memory/|openspec/"
 
 UNSTAGED=$(cd "$CWD" && git diff --name-only 2>/dev/null \
-    | grep -v -E "$EXCLUDE" \
+    | { grep -v -E "$EXCLUDE" || true; } \
     | wc -l | tr -d ' ')
 
 STAGED=$(cd "$CWD" && git diff --cached --name-only 2>/dev/null \
-    | grep -v -E "$EXCLUDE" \
+    | { grep -v -E "$EXCLUDE" || true; } \
     | wc -l | tr -d ' ')
 
 TOTAL_CHANGES=$((UNSTAGED + STAGED))
 
 if [ "$TOTAL_CHANGES" -gt 0 ]; then
     CHANGED=$(cd "$CWD" && { git diff --name-only 2>/dev/null; git diff --cached --name-only 2>/dev/null; } \
-        | grep -v -E "$EXCLUDE" \
+        | { grep -v -E "$EXCLUDE" || true; } \
         | sort -u | head -10)
     FILES_ESCAPED=$(echo "$CHANGED" | tr '\n' '|' | sed 's/|/\\n  - /g' | sed 's/\\n  - $//')
 

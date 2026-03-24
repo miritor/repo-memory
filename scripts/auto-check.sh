@@ -102,7 +102,7 @@ if [ "$COMMIT_COUNT" = "0" ]; then
 fi
 
 CHANGED_FILES=$(cd "$CWD" && git diff --name-only "$LAST_COMMIT" "$CURRENT_COMMIT" 2>/dev/null \
-    | grep -v -E "node_modules/|dist/|build/|\.next/|__pycache__/|vendor/|\.git/|openspec/" \
+    | { grep -v -E "node_modules/|dist/|build/|\.next/|__pycache__/|vendor/|\.git/|openspec/" || true; } \
     | wc -l | tr -d ' ')
 
 RECENT_COMMITS=$(cd "$CWD" && git log --oneline "$LAST_COMMIT..$CURRENT_COMMIT" 2>/dev/null | head -5)
