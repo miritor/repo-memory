@@ -1,24 +1,27 @@
 #!/usr/bin/env bash
-# repo-memory post-task-check: Stop hook — check if code changes need memory sync
-# stdout → JSON for Claude | stderr → visible to user in terminal
-
 set -euo pipefail
 
 CWD="${PWD:-.}"
 MEMORY_DIR="$CWD/.repo-memory"
 
-# ─── Language detection ───
-is_zh() {
-    echo "${LANG:-}${LC_ALL:-}${LANGUAGE:-}" | grep -qi "zh"
-}
+IS_ZH=false
+echo "${LANG:-}${LC_ALL:-}${LANGUAGE:-}" | grep -qi "zh" && IS_ZH=true
 
-# No memory system, silent exit
 if [ ! -d "$MEMORY_DIR" ] || [ ! -f "$MEMORY_DIR/meta.json" ]; then
+    if [ "$IS_ZH" = true ]; then
+        echo "🧠 [repo-memory] 未找到记忆系统，跳过。" >&2
+    else
+        echo "🧠 [repo-memory] No memory system found, skipping." >&2
+    fi
     exit 0
 fi
 
-# No git, can't check
 if [ ! -d "$CWD/.git" ]; then
+    if [ "$IS_ZH" = true ]; then
+        echo "🧠 [repo-memory] 未检测到 git，跳过。" >&2
+    else
+        echo "🧠 [repo-memory] No git detected, skipping." >&2
+    fi
     exit 0
 fi
 
@@ -38,10 +41,9 @@ if [ "$TOTAL_CHANGES" -gt 0 ]; then
     CHANGED=$(cd "$CWD" && { git diff --name-only 2>/dev/null; git diff --cached --name-only 2>/dev/null; } \
         | grep -v -E "$EXCLUDE" \
         | sort -u | head -10)
-
     FILES_ESCAPED=$(echo "$CHANGED" | tr '\n' '|' | sed 's/|/\\n  - /g' | sed 's/\\n  - $//')
 
-    if is_zh; then
+    if [ "$IS_ZH" = true ]; then
         echo "🧠 [repo-memory] 检测到 ${TOTAL_CHANGES} 个文件变更，记忆文档可能需要同步。" >&2
     else
         echo "🧠 [repo-memory] ${TOTAL_CHANGES} file(s) changed — memory docs may need syncing." >&2
@@ -53,7 +55,7 @@ if [ "$TOTAL_CHANGES" -gt 0 ]; then
 }
 ENDJSON
 else
-    if is_zh; then
+    if [ "$IS_ZH" = true ]; then
         echo "🧠 [repo-memory] 未检测到代码变更，记忆已同步。" >&2
     else
         echo "🧠 [repo-memory] No code changes detected. Memory is in sync." >&2
