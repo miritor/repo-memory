@@ -1,21 +1,19 @@
 #!/usr/bin/env bash
-# repo-memory auto-check: SessionStart 时自动检查记忆是否需要更新
-# 被 Claude Code Hook 调用，通过 additionalContext 注入检查结果给 Claude
-#
-# 输出 JSON 格式，通过 stdout 返回给 Claude Code：
-# - 如果记忆不存在 → 提示需要初始化
-# - 如果记忆过旧 → 提示需要增量更新，并附带变更摘要
-# - 如果记忆是最新的 → 静默，不打扰用户
+# repo-memory auto-check: SessionStart hook — check if memory needs updating
+# stdout → JSON for Claude | stderr → visible to user in terminal
 
 set -euo pipefail
 
-# 获取当前工作目录（Claude Code 会传入 cwd）
-CWD=$(jq -r '.cwd // "."' 2>/dev/null || echo ".")
+CWD="${PWD:-.}"
 MEMORY_DIR="$CWD/.repo-memory"
 
-# ─── 情况1：没有 .repo-memory 目录 ───
+# ─── Language detection ───
+is_zh() {
+    echo "${LANG:-}${LC_ALL:-}${LANGUAGE:-}" | grep -qi "zh"
+}
+
+# ─── Case 1: no .repo-memory directory ───
 if [ ! -d "$MEMORY_DIR" ]; then
-    # 检查是否是一个代码仓库（有 src/ 或常见项目文件）
     IS_REPO=false
     for indicator in "package.json" "requirements.txt" "go.mod" "Cargo.toml" "pom.xml" "pyproject.toml" "src" "lib" "app"; do
         if [ -e "$CWD/$indicator" ]; then
@@ -25,83 +23,119 @@ if [ ! -d "$MEMORY_DIR" ]; then
     done
 
     if [ "$IS_REPO" = true ]; then
+        if is_zh; then
+            echo "🧠 [repo-memory] 未找到仓库记忆，建议执行 init 建档。" >&2
+        else
+            echo "🧠 [repo-memory] No memory found. Recommend running init." >&2
+        fi
         cat <<'ENDJSON'
 {
-  "additionalContext": "[repo-memory] 检测到这是一个代码仓库，但尚未建立仓库记忆（.repo-memory/ 不存在）。如果用户的任务涉及理解或修改代码，建议先执行仓库记忆初始化（使用 repo-memory skill 的 init 模式）。可以在回复中简要提及这一点，让用户决定是否建档。"
+  "additionalContext": "[repo-memory] Detected a code repository but no .repo-memory/ exists. If the user's task involves understanding or modifying code, suggest initializing repo memory first (using repo-memory skill init mode). Briefly mention this in your response and let the user decide."
 }
 ENDJSON
     fi
-    # 如果不是代码仓库，静默退出
     exit 0
 fi
 
-# ─── 情况2：有 .repo-memory 但没有 meta.json ───
+# ─── Case 2: .repo-memory exists but meta.json missing ───
 if [ ! -f "$MEMORY_DIR/meta.json" ]; then
+    if is_zh; then
+        echo "🧠 [repo-memory] 记忆目录存在但 meta.json 缺失，数据可能不完整。" >&2
+    else
+        echo "🧠 [repo-memory] Memory directory found but meta.json is missing." >&2
+    fi
     cat <<'ENDJSON'
 {
-  "additionalContext": "[repo-memory] .repo-memory/ 目录存在但 meta.json 缺失，记忆数据可能不完整。建议重新执行 init 建档。"
+  "additionalContext": "[repo-memory] .repo-memory/ directory exists but meta.json is missing. Memory data may be incomplete. Suggest re-running init."
 }
 ENDJSON
     exit 0
 fi
 
-# ─── 情况3：有完整记忆，检查是否过旧 ───
+# ─── Case 3: memory exists, check staleness ───
 LAST_COMMIT=$(grep -o '"last_commit": "[^"]*"' "$MEMORY_DIR/meta.json" | cut -d'"' -f4 2>/dev/null || echo "unknown")
 
-# 如果没有 git，无法检查，静默退出
 if [ ! -d "$CWD/.git" ]; then
+    if is_zh; then
+        echo "🧠 [repo-memory] 记忆已加载，未检测到 git，跳过版本检查。" >&2
+    else
+        echo "🧠 [repo-memory] Memory loaded. No git detected, skipping staleness check." >&2
+    fi
     exit 0
 fi
 
 CURRENT_COMMIT=$(cd "$CWD" && git rev-parse HEAD 2>/dev/null || echo "unknown")
 
-# 如果 commit 相同，记忆是最新的，静默退出
 if [ "$LAST_COMMIT" = "$CURRENT_COMMIT" ]; then
+    if is_zh; then
+        echo "🧠 [repo-memory] 记忆已是最新 (${CURRENT_COMMIT:0:8})" >&2
+    else
+        echo "🧠 [repo-memory] Memory is up to date. (${CURRENT_COMMIT:0:8})" >&2
+    fi
     exit 0
 fi
 
-# 如果上次 commit 不在历史中（比如 rebase 了），标记为需要检查
 if ! cd "$CWD" && git cat-file -t "$LAST_COMMIT" >/dev/null 2>&1; then
+    if is_zh; then
+        echo "🧠 [repo-memory] ⚠ 基准 commit 不在历史中（可能 rebase 了），建议重新建档。" >&2
+    else
+        echo "🧠 [repo-memory] ⚠ Base commit not found in history (rebase?). Recommend full rebuild." >&2
+    fi
     cat <<ENDJSON
 {
-  "additionalContext": "[repo-memory] 仓库记忆的基准 commit ($LAST_COMMIT) 在当前 git 历史中不存在（可能经历了 rebase/force push）。建议重新执行全量建档。"
+  "additionalContext": "[repo-memory] Memory base commit ($LAST_COMMIT) not found in current git history (possibly rebased/force pushed). Suggest re-running full init."
 }
 ENDJSON
     exit 0
 fi
 
-# 计算 commit 差距
 COMMIT_COUNT=$(cd "$CWD" && git rev-list --count "$LAST_COMMIT..$CURRENT_COMMIT" 2>/dev/null || echo "0")
 
 if [ "$COMMIT_COUNT" = "0" ]; then
+    if is_zh; then
+        echo "🧠 [repo-memory] 记忆已是最新。" >&2
+    else
+        echo "🧠 [repo-memory] Memory is up to date." >&2
+    fi
     exit 0
 fi
 
-# 获取变更文件数量（排除生成代码目录）
 CHANGED_FILES=$(cd "$CWD" && git diff --name-only "$LAST_COMMIT" "$CURRENT_COMMIT" 2>/dev/null \
     | grep -v -E "node_modules/|dist/|build/|\.next/|__pycache__/|vendor/|\.git/|openspec/" \
     | wc -l | tr -d ' ')
 
-# 获取最近几条 commit message
 RECENT_COMMITS=$(cd "$CWD" && git log --oneline "$LAST_COMMIT..$CURRENT_COMMIT" 2>/dev/null | head -5)
 
-# 根据差距决定策略
 if [ "$COMMIT_COUNT" -le 3 ]; then
-    URGENCY="低"
-    SUGGESTION="记忆略有滞后，建议在涉及变更区域时顺便更新"
+    URGENCY="low"
+    SUGGESTION="Memory slightly stale, update when working on changed areas"
+    if is_zh; then
+        echo "🧠 [repo-memory] 记忆落后 ${COMMIT_COUNT} 个提交（${CHANGED_FILES} 个文件变更），紧急度：低" >&2
+    else
+        echo "🧠 [repo-memory] Memory is ${COMMIT_COUNT} commits behind (${CHANGED_FILES} files changed). Urgency: low." >&2
+    fi
 elif [ "$COMMIT_COUNT" -le 10 ]; then
-    URGENCY="中"
-    SUGGESTION="建议尽快执行增量更新以保持记忆准确性"
+    URGENCY="medium"
+    SUGGESTION="Recommend updating soon to keep memory accurate"
+    if is_zh; then
+        echo "🧠 [repo-memory] ⚠ 记忆落后 ${COMMIT_COUNT} 个提交（${CHANGED_FILES} 个文件变更），紧急度：中" >&2
+    else
+        echo "🧠 [repo-memory] ⚠ Memory is ${COMMIT_COUNT} commits behind (${CHANGED_FILES} files changed). Urgency: medium." >&2
+    fi
 else
-    URGENCY="高"
-    SUGGESTION="记忆严重滞后，强烈建议立即执行增量更新"
+    URGENCY="high"
+    SUGGESTION="Memory severely stale, strongly recommend immediate incremental update"
+    if is_zh; then
+        echo "🧠 [repo-memory] 🚨 记忆落后 ${COMMIT_COUNT} 个提交（${CHANGED_FILES} 个文件变更），紧急度：高！" >&2
+    else
+        echo "🧠 [repo-memory] 🚨 Memory is ${COMMIT_COUNT} commits behind (${CHANGED_FILES} files changed). Urgency: HIGH." >&2
+    fi
 fi
 
-# 输出结构化上下文（转义换行符用于 JSON）
 COMMITS_ESCAPED=$(echo "$RECENT_COMMITS" | sed 's/"/\\"/g' | tr '\n' '|' | sed 's/|/\\n/g')
 
 cat <<ENDJSON
 {
-  "additionalContext": "[repo-memory] 仓库记忆需要更新。\\n- 滞后: ${COMMIT_COUNT} 个提交（紧急度: ${URGENCY}）\\n- 变更文件: ${CHANGED_FILES} 个\\n- 最近提交:\\n${COMMITS_ESCAPED}\\n- 建议: ${SUGGESTION}\\n\\n如果用户当前任务涉及代码修改或理解，请先使用 repo-memory skill 的 update 模式执行增量更新，然后再处理用户的任务。对于紧急度为「高」的情况，应主动告知用户并执行更新；紧急度为「低」或「中」时，可在回复中简要提及记忆状态，让用户决定。"
+  "additionalContext": "[repo-memory] Memory needs updating.\\n- Behind: ${COMMIT_COUNT} commits (urgency: ${URGENCY})\\n- Changed files: ${CHANGED_FILES}\\n- Recent commits:\\n${COMMITS_ESCAPED}\\n- Suggestion: ${SUGGESTION}\\n\\nIf the user's current task involves code modification or understanding, run repo-memory skill update mode first. For HIGH urgency, proactively inform the user and run the update. For low/medium, briefly mention memory status and let the user decide."
 }
 ENDJSON
